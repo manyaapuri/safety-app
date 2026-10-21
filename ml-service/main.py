@@ -1,15 +1,11 @@
 """
-ML microservice for Urban Women Safety App v2.
+ML Microservice for Urban Guardian — Pune Women Safety System.
 
 Provides:
-- POST /predict/anomaly: detects unusual movement patterns
+- POST /predict/anomaly: detects unusual movement patterns during journeys
   (sudden stops, large jumps, prolonged inactivity, route deviation)
-- POST /predict/route-safety: scores a route based on heuristics
-  (placeholder for a real model trained on incident data)
 - POST /predict/danger-zone: check if a point falls in any danger zone
-- GET  /health: health checkpostgresql://postgres.tjjlmlfnglxqzipcdmgm:[YOUR-PASSWORD]@aws-1-ap-south-1.pooler.supabase.com:5432/postgres
-but this will lead to extr
-
+- GET  /health: health check
 
 Run with: uvicorn main:app --host 0.0.0.0 --port 6000 --reload
 """

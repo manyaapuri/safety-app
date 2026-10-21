@@ -11,11 +11,13 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Auto-logout on 401
+// Auto-logout on 401 (only for authenticated session requests, not auth endpoints)
 api.interceptors.response.use(
   (r) => r,
   (err) => {
-    if (err.response?.status === 401) {
+    const url = err.config?.url || '';
+    const isAuthRoute = url.includes('/auth/login') || url.includes('/auth/register');
+    if (err.response?.status === 401 && !isAuthRoute) {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
       window.location.reload();

@@ -1,243 +1,150 @@
-# 🛡️ Urban Safety App v2
+# 🛡️ Urban Guardian — Pune Women's Safety App
 
-A **comprehensive personal safety application** with real-time GPS tracking, voice-activated SOS, camera integration, danger zone alerts, safe route advisor, police integration, and push notifications.
+A practical, production-grade women's journey-safety platform tailored specifically for **Pune, Maharashtra**, featuring real-time OSRM route geometry, trusted journey sharing with automatic overdue alerts, a verified Pune facilities database, reliable emergency SOS with honest delivery tracking, and community safety reporting.
 
 ---
 
-## ✨ Features
+## ✨ Features & Architecture
 
 | Feature | Description |
 |---------|-------------|
-| 🆘 **Manual SOS** | One-tap SOS with 5-second cancellable countdown |
-| 🎙️ **Voice SOS** | Automatic trigger on keywords: "help me", "SOS", "leave me alone", "call police" |
-| 📷 **Camera Evidence** | Auto-captures timestamped photo on SOS for evidence |
-| 📍 **Real-time GPS** | Continuous high-accuracy GPS tracking via `watchPosition` |
-| 🔗 **Location Sharing** | Time-limited share links (30min–8hr) for family/friends |
-| 👥 **Emergency Contacts** | SMS alerts to all contacts via Twilio on SOS trigger |
-| 🚔 **Police Integration** | Structured POST to configurable police API endpoint |
-| 🔔 **Push Notifications** | Web Push (VAPID) — alerts even when app is in background |
-| ⚠️ **Danger Zone Alerts** | Geofence-based real-time alerts when entering risky areas |
-| 🗺️ **Safe Route Advisor** | ML-powered route safety scoring (day/night aware) |
-| 📊 **Anomaly Detection** | ML flags unusual movement patterns (sudden stops, forced transport) |
-| 📋 **Alert History** | Full history with resolve/false-alarm actions |
-| 🌙 **Dark UI** | Premium glassmorphism dark theme with animations |
+| 🗺️ **Pune Journey Planner** | Real-world OSRM routing engine with live geometry, distance (km), and ETAs across Pune hubs (Shivajinagar, Hinjawadi, Deccan, Kothrud, Viman Nagar, etc.). Displays alternative routes and verified municipal facilities along the corridor without arbitrary "safety scores". |
+| 🤝 **Trusted Journey Sharing** | Start journeys with origin, destination, and expected arrival time. Generates secure, expiring share tokens (`/track/:token`) for trusted contacts. Includes live trip extension, trip cancellation, and automatic overdue alerting. Access is immediately revoked upon trip completion to protect privacy. |
+| 🚨 **Reliable Emergency SOS** | Accessible SOS button with 5-second cancellable countdown. Persists alert to database first before attempting external delivery. Delivers SMS via Twilio or Dev Mock Provider, records honest delivery states (`sent`, `simulated`, `failed`), and provides one-tap direct calling to verified Indian hotlines (112, 1091, 100, 108). Optional camera evidence toggle (disabled by default). |
+| 🏛️ **Pune Verified Facilities** | Comprehensive verified database of Pune Police stations (Headquarters, Deccan, Shivajinagar, Hinjawadi, Kothrud), 24/7 emergency hospitals (Sassoon, KEM, Sahyadri, Ruby Hall, Jupiter), transit hubs (Pune Junction, Swargate), Metro interchange stations, and the Pune Police Bharosa Cell (Women's Helpline). Includes proximity distance and direct Google Maps navigation links. |
+| 📢 **Community Safety Reports** | Crowd-sourced hazard reporting (poor street lighting, harassment, isolated roads) with duplicate merging within 150m, community verification upvoting, abuse flagging, and 30-day auto-expiration. |
+| 👥 **Trusted Contacts** | Emergency contacts with explicit consent disclosure, direct relation tags, and an on-demand test notification workflow. |
+| 🔔 **Web Push & Reliability** | Web Push (VAPID) service worker notifications, startup environment variable validation, and secure Socket.io room subscription with token verification. |
 
 ---
 
-## 🏗️ Architecture
+## 🏗️ Technical Architecture
 
 ```
 safety-app/
-├── backend/              # Node.js + Express + Socket.io
+├── backend/                  # Node.js + Express + Socket.io
 │   ├── src/
 │   │   ├── routes/
-│   │   │   ├── auth.js         # JWT auth (register/login)
-│   │   │   ├── contacts.js     # Emergency contacts CRUD
-│   │   │   ├── location.js     # GPS pings + share links + geofence check
-│   │   │   ├── sos.js          # SOS trigger (manual/voice/photo)
-│   │   │   ├── zones.js        # Danger zone CRUD
-│   │   │   ├── push.js         # Web Push subscriptions
-│   │   │   └── route.js        # Route safety proxy to ML
+│   │   │   ├── auth.js             # JWT authentication (register/login)
+│   │   │   ├── contacts.js         # Emergency contacts CRUD & test SMS
+│   │   │   ├── facilities.js       # Pune facilities directory & nearby lookup
+│   │   │   ├── journeys.js         # Trusted trip sharing, lifecycle & tracking
+│   │   │   ├── location.js         # Real-time GPS pings & room broadcasts
+│   │   │   ├── push.js             # Web Push subscription & test push
+│   │   │   ├── reports.js          # Community hazard reports & moderation
+│   │   │   ├── route.js            # OSRM routing engine & Pune search
+│   │   │   ├── sos.js              # Reliable SOS, delivery logs & retry
+│   │   │   └── zones.js            # Pune caution areas & geofences
 │   │   ├── services/
-│   │   │   ├── notificationService.js  # SMS (Twilio) + Police API
-│   │   │   ├── pushService.js          # Web Push (web-push / VAPID)
-│   │   │   ├── mlService.js            # ML anomaly detection bridge
-│   │   │   └── zoneService.js          # Haversine geofence check
-│   │   ├── sockets/index.js    # Socket.io: live location + zone alerts
-│   │   ├── middleware/auth.js  # JWT middleware
-│   │   ├── db.js               # PostgreSQL pool
-│   │   └── server.js           # Express app entry point
-│   ├── schema.sql              # v1 DB schema
-│   ├── schema_v2.sql           # v2 additions (zones, push, voice, photo)
-│   ├── package.json
-│   └── .env.example
+│   │   │   ├── notificationService.js # Twilio SMS & Mock Dev Provider
+│   │   │   ├── pushService.js         # Web Push (web-push / VAPID)
+│   │   │   ├── mlService.js           # ML anomaly detection bridge
+│   │   │   └── zoneService.js         # Proximity checks
+│   │   ├── sockets/index.js        # Secure token-verified Socket.io rooms
+│   │   ├── middleware/auth.js      # JWT Bearer token authentication
+│   │   ├── db.js                   # Universal dual-mode DB (PostgreSQL + SQLite)
+│   │   └── server.js               # Express entrypoint & overdue trip monitor
+│   ├── tests/
+│   │   └── api.test.js             # Automated integration test suite
+│   ├── schema.sql                  # PostgreSQL v1 schema
+│   ├── schema_v2.sql               # PostgreSQL v2 schema
+│   ├── schema_v3_pune.sql          # PostgreSQL v3 Pune schema
+│   └── package.json
 │
-├── frontend/             # React + Vite + Leaflet
-│   ├── public/
-│   │   └── sw.js               # Service Worker for push notifications
+├── frontend/                 # React 18 + Vite + Leaflet
 │   ├── src/
 │   │   ├── components/
-│   │   │   ├── Auth.jsx         # Login / Register
-│   │   │   ├── SOSButton.jsx    # SOS with countdown + voice + camera
-│   │   │   ├── VoiceSOS.jsx     # Web Speech API keyword detector
-│   │   │   ├── CameraCapture.jsx # Camera snapshot for evidence
-│   │   │   ├── MapView.jsx      # Live map + location sharing
-│   │   │   ├── SafeZones.jsx    # Danger zone management
-│   │   │   ├── RouteAdvisor.jsx # Route safety scoring UI
-│   │   │   ├── Contacts.jsx     # Emergency contacts
-│   │   │   ├── AlertHistory.jsx # SOS alert history
-│   │   │   ├── PushSetup.jsx    # Push notification setup
-│   │   │   └── TrackPage.jsx    # Public live-tracking view
-│   │   ├── App.jsx              # Main app with tabbed navigation
-│   │   ├── api.js               # Axios client
-│   │   ├── main.jsx             # Entry + SW registration
-│   │   └── index.css            # Dark glassmorphism design system
-│   ├── index.html
-│   ├── package.json
-│   └── vite.config.js
+│   │   │   ├── PuneJourneyPlanner.jsx      # OSRM map planner & facilities overlay
+│   │   │   ├── TrustedJourneySharing.jsx   # Trip lifecycle & private share link
+│   │   │   ├── SOSButton.jsx               # Reliable SOS with 112/1091 hotlines
+│   │   │   ├── PuneFacilitiesDirectory.jsx # Police, hospital & transit directory
+│   │   │   ├── CommunityReportsView.jsx    # Hazard reports & duplicate merging
+│   │   │   ├── Contacts.jsx                # Emergency contacts & test SMS
+│   │   │   ├── TrackPage.jsx               # Secure private viewer page
+│   │   │   ├── AlertHistory.jsx            # SOS history & resolution
+│   │   │   ├── PushSetup.jsx               # Browser push notification setup
+│   │   │   └── Auth.jsx                    # Login & Register with clear errors
+│   │   ├── App.jsx                         # Main app shell & navigation
+│   │   ├── api.js                          # Axios interceptors & auto-logout
+│   │   └── index.css                       # Glassmorphism dark UI design system
+│   └── public/sw.js                        # Push notification service worker
 │
-└── ml-service/           # Python FastAPI
-    ├── main.py             # Anomaly detection + route safety + zone check
-    └── requirements.txt
+└── ml-service/               # Python FastAPI
+    └── main.py               # Movement anomaly detection heuristics
 ```
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Quick Start Guide
 
-### Prerequisites
-- Node.js 18+
-- Python 3.10+
-- PostgreSQL 14+ (with PostGIS extension)
+### 1. Prerequisites
+- **Node.js**: v18+ (tested on Node.js v24)
+- **Database**: 
+  - Works **out-of-the-box with zero setup** via built-in SQLite (`safety_app.sqlite`).
+  - Or connect any local or cloud PostgreSQL instance (PostGIS optional) by setting `DATABASE_URL`.
 
-### 1. Database Setup
-```bash
-psql -U postgres -c "CREATE DATABASE safety_app;"
-psql -U postgres -d safety_app -f backend/schema.sql
-psql -U postgres -d safety_app -f backend/schema_v2.sql
-```
-
-### 2. Backend
+### 2. Backend Setup
 ```bash
 cd backend
-cp .env.example .env
-# Edit .env with your values
 npm install
 npm run dev
 ```
+The backend will validate environment variables and start on **http://localhost:5000**.
+- If PostgreSQL is not running on port 5432, it automatically initializes the local embedded SQLite database and seeds 19 verified Pune safety facilities.
+- Twilio defaults to a clearly-labeled **Mock Notification Provider** for development so SMS alerts can be tested locally without needing external API credits.
 
-### 3. ML Service
-```bash
-cd ml-service
-pip install -r requirements.txt
-uvicorn main:app --host 0.0.0.0 --port 6000 --reload
-```
-
-### 4. Frontend
+### 3. Frontend Setup
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
-
-Open **http://localhost:5173**
+Open **http://localhost:5173** in your browser.
 
 ---
 
-## 🔧 Configuration
+## 🧪 Running Automated Tests
 
-Edit `backend/.env`:
+A comprehensive integration test suite covers all critical workflows:
+- User registration and duplicate rejection
+- Authentication & invalid credentials handling (401)
+- Emergency contacts & test SMS delivery (honest status)
+- Pune facilities directory, category filtering & proximity search
+- Real OSRM route calculation across Pune
+- Trusted journey sharing lifecycle and instant token revocation upon arrival (410 Gone)
+- SOS database persistence, delivery logs, and retry without duplicate alert
+- Community safety report submission, duplicate merging within 150m, and abuse flagging
 
-```env
-PORT=5000
-JWT_SECRET=your_long_random_secret
-
-# PostgreSQL
-DATABASE_URL=postgresql://user:password@localhost:5432/safety_app
-
-# Twilio (SMS alerts to emergency contacts)
-TWILIO_ACCOUNT_SID=your_sid
-TWILIO_AUTH_TOKEN=your_token
-TWILIO_FROM_NUMBER=+10000000000
-
-# Police API (replace with actual police integration URL)
-POLICE_API_URL=https://your-police-api.gov.in/alert
-POLICE_API_KEY=your_key
-
-# ML Service
-ML_SERVICE_URL=http://localhost:6000
-
-# Frontend URL (for share links)
-FRONTEND_URL=http://localhost:5173
-
-# Web Push VAPID (generate with: npx web-push generate-vapid-keys)
-VAPID_PUBLIC_KEY=your_vapid_public_key
-VAPID_PRIVATE_KEY=your_vapid_private_key
-VAPID_EMAIL=mailto:admin@yourdomain.com
+Run the test suite:
+```bash
+cd backend
+npm test
 ```
 
 ---
 
-## 📡 API Reference
+## ⚙️ Environment Variables & Credentials Reference
 
-### Auth
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/auth/register` | Register new user |
-| POST | `/api/auth/login` | Login, get JWT |
+Configure in `backend/.env`:
 
-### SOS
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/sos` | Trigger SOS (manual/voice/photo) |
-| PUT | `/api/sos/:id/resolve` | Mark resolved / false alarm |
-| GET | `/api/sos/history` | Alert history |
-
-### Location
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/location` | Send GPS ping (triggers geofence check) |
-| GET | `/api/location/history` | Location history |
-| POST | `/api/location/share` | Create share link |
-| GET | `/api/location/track/:token` | Public tracking (no auth) |
-
-### Zones
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/zones` | List danger zones |
-| POST | `/api/zones` | Add zone |
-| DELETE | `/api/zones/:id` | Remove zone |
-| POST | `/api/zones/check` | Check if coords in danger zone |
-
-### Push Notifications
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/push/vapid-public-key` | Get VAPID public key |
-| POST | `/api/push/subscribe` | Subscribe device |
-| DELETE | `/api/push/unsubscribe` | Unsubscribe |
-| POST | `/api/push/test` | Send test push |
-
-### Route Safety
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/route/safety` | Score a route |
-| GET | `/api/route/history` | Past route queries |
+| Variable | Description | Default / Mode |
+|----------|-------------|----------------|
+| `PORT` | Backend listening port | `5000` |
+| `JWT_SECRET` | Secret key for signing auth tokens | Min 32 chars |
+| `DATABASE_URL` | PostgreSQL connection string | Defaults to SQLite fallback if unreachable |
+| `TWILIO_ACCOUNT_SID` | Twilio Account SID for live SMS alerts | Set to real SID for live SMS; leave as mock for dev |
+| `TWILIO_AUTH_TOKEN` | Twilio Auth Token | Set to real token for live SMS |
+| `TWILIO_FROM_NUMBER` | Twilio registered phone number | e.g. `+1234567890` |
+| `VAPID_PUBLIC_KEY` | Web Push Public Key | Generated via `web-push` |
+| `VAPID_PRIVATE_KEY` | Web Push Private Key | Generated via `web-push` |
+| `POLICE_API_URL` | Official Police dispatch webhook | Placeholder (requires formal MoU with Pune Police) |
+| `FRONTEND_URL` | Public frontend URL for share links | `http://localhost:5173` |
 
 ---
 
-## 🔌 Socket.io Events
+## 🔒 Safety & Privacy Principles
 
-| Event | Direction | Description |
-|-------|-----------|-------------|
-| `location:update` | Server → Client | Live GPS update |
-| `zone:alert` | Server → Client | Danger zone entered |
-| `sos:triggered` | Server → Client | SOS fired |
-| `subscribe:user` | Client → Server | Subscribe to user's room |
-
----
-
-## 🔒 Security Notes
-
-1. **JWT** — All sensitive endpoints require `Authorization: Bearer <token>`
-2. **Photos** — Base64 photos stored in DB; consider S3 for production
-3. **Police API** — Requires a formal MOU with local law enforcement for production use
-4. **Voice** — Runs entirely in browser; audio is never sent to the server
-5. **HTTPS required** — Camera, microphone, and push notifications require HTTPS in production
-
----
-
-## 🌟 Production Checklist
-
-- [ ] Replace placeholder POLICE_API_URL with real endpoint
-- [ ] Generate VAPID keys: `npx web-push generate-vapid-keys`
-- [ ] Configure Twilio with a real number
-- [ ] Enable PostGIS on production DB
-- [ ] Deploy with HTTPS (required for camera/mic/push APIs)
-- [ ] Train ML models on real incident data for your city
-- [ ] Set up S3/GCS for photo storage instead of DB blob
-- [ ] Add rate limiting to prevent SOS spam
-
----
-
-## 📄 License
-MIT © Urban Safety App
+1. **No Synthetic Safety Scores**: The app does not invent arbitrary scores (e.g. "82% safe") without validated incident data. Instead, it provides objective route geometry, distance, travel duration, and highlights verified municipal safety facilities along the corridor.
+2. **Strict Location Privacy**: Real-time tracking links are time-limited, expiring, and revoked immediately upon trip completion. Viewers cannot access past location history.
+3. **Honest Delivery States**: The app distinguishes between live Twilio SMS (`sent`), development simulation (`simulated`), and delivery errors (`failed`). Police dispatch is never falsely claimed.
+4. **Emergency Calling Fallback**: When connectivity or notifications fail, one-tap direct dialing for Indian emergency numbers (`112`, `1091`, `100`, `108`) is prominently available.

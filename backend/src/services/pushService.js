@@ -8,8 +8,12 @@ const vapidEmail = process.env.VAPID_EMAIL || 'mailto:admin@safetyapp.com';
 
 let pushConfigured = false;
 if (vapidPublicKey && vapidPrivateKey) {
-  webpush.setVapidDetails(vapidEmail, vapidPublicKey, vapidPrivateKey);
-  pushConfigured = true;
+  try {
+    webpush.setVapidDetails(vapidEmail, vapidPublicKey, vapidPrivateKey);
+    pushConfigured = true;
+  } catch (err) {
+    console.warn('[Push] Failed to initialize VAPID details:', err.message);
+  }
 }
 
 /**

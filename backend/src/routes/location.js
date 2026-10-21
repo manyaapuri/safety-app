@@ -31,8 +31,20 @@ router.post('/', auth, async (req, res) => {
     timestamp: new Date().toISOString()
   };
 
-  // Broadcast to anyone viewing this user's live location
-  io.to(`user_${req.user.id}`).emit('location:update', locationData);
+  if (io) {
+    // Broadcast to authenticated user's personal channel
+    io.to(`user_${req.user.id}`).emit('location:update', locationData);
+
+    // Broadcast to active journey channel if traveling
+    pool.query(
+      "SELECT id FROM journeys WHERE user_id = $1 AND status IN ('active', 'overdue') LIMIT 1",
+      [req.user.id]
+    ).then((res) => {
+      if (res.rows.length > 0) {
+        io.to(`journey_${res.rows[0].id}`).emit('location:update', locationData);
+      }
+    }).catch(() => {});
+  }
 
   // Danger zone check (async, non-blocking)
   checkDangerZones(pool, req.user.id, latitude, longitude)

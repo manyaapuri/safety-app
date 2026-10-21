@@ -5,19 +5,20 @@
   "type": "commonjs",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "nodemon src/server.js"
+    "dev": "nodemon src/server.js",
+    "test": "node --test tests/api.test.js"
   },
   "dependencies": {
-    "express": "^4.19.2",
-    "socket.io": "^4.7.5",
-    "pg": "^8.11.5",
-    "dotenv": "^16.4.5",
-    "twilio": "^5.0.4",
-    "jsonwebtoken": "^9.0.2",
+    "axios": "^1.7.2",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
     "nanoid": "^3.3.7",
-    "axios": "^1.7.2",
+    "pg": "^8.11.5",
+    "socket.io": "^4.7.5",
+    "twilio": "^5.13.1",
     "web-push": "^3.6.7"
   },
   "devDependencies": {

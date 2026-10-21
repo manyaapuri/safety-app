@@ -23,7 +23,12 @@ export default function Auth({ onAuth }) {
       localStorage.setItem('user', JSON.stringify(data.user));
       onAuth(data.user);
     } catch (err) {
-      setError(err.response?.data?.error || 'Authentication failed. Please try again.');
+      const msg =
+        err.response?.data?.error ||
+        (err.code === 'ERR_NETWORK' || !err.response
+          ? 'Unable to connect to server. Please ensure the backend is running.'
+          : 'Authentication failed. Please check your credentials.');
+      setError(msg);
     } finally {
       setLoading(false);
     }
