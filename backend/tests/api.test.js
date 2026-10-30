@@ -12,6 +12,21 @@ let testAlertId = null;
 let testReportId = null;
 
 const uniqueEmail = `pune_test_${Date.now()}@example.com`;
+const reportTestLatitude = 18.45 + Math.random() * 0.15;
+const reportTestLongitude = 73.75 + Math.random() * 0.15;
+
+async function waitForDeliveryCompletion(alertId, authHeaders) {
+  let deliveries = [];
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const response = await axios.get(`${BASE_URL}/sos/deliveries/${alertId}`, authHeaders);
+    deliveries = response.data;
+    if (deliveries.length && deliveries.every((delivery) => !['queued', 'processing'].includes(delivery.status))) {
+      return deliveries;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  return deliveries;
+}
 
 test('1. Health Check Endpoint', async () => {
   const res = await axios.get('http://localhost:5000/health');
@@ -196,6 +211,11 @@ test('7. Trusted Journey Sharing: Lifecycle & Revocation on Completion', async (
 test('8. Reliable SOS: Database Persistence & Honest Delivery States', async () => {
   const authHeaders = { headers: { Authorization: `Bearer ${authToken}` } };
 
+  await axios.post(`${BASE_URL}/contacts`, {
+    name: 'Invalid Test Recipient',
+    phone: 'not-a-phone'
+  }, authHeaders);
+
   const sosRes = await axios.post(
     `${BASE_URL}/sos`,
     {
@@ -204,7 +224,10 @@ test('8. Reliable SOS: Database Persistence & Honest Delivery States', async () 
       type: 'manual',
       address: 'Deccan Gymkhana, Pune'
     },
-    authHeaders
+    {
+      ...authHeaders,
+      headers: { ...authHeaders.headers, 'Idempotency-Key': `sos-test-${Date.now()}` }
+    }
   );
 
   assert.equal(sosRes.status, 201);
@@ -212,10 +235,14 @@ test('8. Reliable SOS: Database Persistence & Honest Delivery States', async () 
   assert.equal(sosRes.data.alert.status, 'active');
   testAlertId = sosRes.data.alert.id;
 
-  // Verify deliveries are honestly tracked
+  // Contact notifications are durably queued independently from incident creation.
   assert.ok(Array.isArray(sosRes.data.deliveries));
-  assert.equal(sosRes.data.deliveries.length, 1);
-  assert.ok(['sent', 'simulated'].includes(sosRes.data.deliveries[0].status));
+  assert.equal(sosRes.data.deliveries.length, 2);
+  assert.ok(sosRes.data.deliveries.every((delivery) => delivery.status === 'queued'));
+  const completedDeliveries = await waitForDeliveryCompletion(testAlertId, authHeaders);
+  assert.ok(completedDeliveries.some((delivery) => delivery.status === 'simulated'));
+  assert.ok(completedDeliveries.some((delivery) => delivery.status === 'failed'));
+  assert.ok(completedDeliveries.find((delivery) => delivery.status === 'failed').attempt_count >= 1);
 
   // Verify police is NOT falsely claimed
   assert.equal(sosRes.data.policeStatus.dispatched, false);
@@ -225,11 +252,63 @@ test('8. Reliable SOS: Database Persistence & Honest Delivery States', async () 
   const retryRes = await axios.post(`${BASE_URL}/sos/${testAlertId}/retry`, {}, authHeaders);
   assert.equal(retryRes.status, 200);
   assert.equal(retryRes.data.alertId, testAlertId);
+  assert.equal(retryRes.data.retryDeliveries.length, 1);
+  assert.equal(retryRes.data.retryDeliveries[0].status, 'queued');
+
+  const secondAttempt = await waitForDeliveryCompletion(testAlertId, authHeaders);
+  assert.ok(secondAttempt.some((delivery) => delivery.status === 'failed' && delivery.attempt_count === 2));
+  await axios.post(`${BASE_URL}/sos/${testAlertId}/retry`, {}, authHeaders);
+  const thirdAttempt = await waitForDeliveryCompletion(testAlertId, authHeaders);
+  assert.ok(thirdAttempt.some((delivery) => delivery.status === 'failed' && delivery.attempt_count === 3));
+  const cappedRetryRes = await axios.post(`${BASE_URL}/sos/${testAlertId}/retry`, {}, authHeaders);
+  assert.deepEqual(cappedRetryRes.data.retryDeliveries, []);
 
   // Resolve alert
   const resolveRes = await axios.put(`${BASE_URL}/sos/${testAlertId}/resolve`, { status: 'resolved' }, authHeaders);
   assert.equal(resolveRes.status, 200);
   assert.equal(resolveRes.data.status, 'resolved');
+});
+
+test('8a. SOS can be persisted without GPS coordinates', async () => {
+  const authHeaders = { headers: { Authorization: `Bearer ${authToken}` } };
+  const idempotencyKey = `sos-no-gps-${Date.now()}`;
+  const payload = {
+    latitude: null,
+    longitude: null,
+    type: 'manual',
+    trigger_type: 'manual'
+  };
+  const res = await axios.post(`${BASE_URL}/sos`, payload, {
+    ...authHeaders,
+    headers: { ...authHeaders.headers, 'Idempotency-Key': idempotencyKey }
+  });
+
+  assert.equal(res.status, 201);
+  assert.ok(res.data.alert.id);
+  assert.equal(res.data.alert.latitude, null);
+  assert.equal(res.data.alert.longitude, null);
+  assert.equal(res.data.alert.location_accuracy, null);
+  assert.match(res.data.smsMessage, /could not provide a current location/i);
+
+  const retry = await axios.post(`${BASE_URL}/sos`, payload, {
+    ...authHeaders,
+    headers: { ...authHeaders.headers, 'Idempotency-Key': idempotencyKey }
+  });
+  assert.equal(retry.status, 200);
+  assert.equal(retry.data.duplicate, true);
+  assert.equal(retry.data.alert.id, res.data.alert.id);
+});
+
+test('8b. SOS rejects invalid or partial coordinates', async () => {
+  const authHeaders = { headers: { Authorization: `Bearer ${authToken}` } };
+  await assert.rejects(
+    axios.post(`${BASE_URL}/sos`, { latitude: 18.5 }, authHeaders),
+    (err) => err.response?.status === 400
+  );
+  await assert.rejects(
+    axios.post(`${BASE_URL}/sos`, { latitude: 91, longitude: 73.8 }, authHeaders),
+    (err) => err.response?.status === 400
+  );
 });
 
 test('9. Community Safety Reports: Duplicate Merging & Flagging', async () => {
@@ -241,8 +320,8 @@ test('9. Community Safety Reports: Duplicate Merging & Flagging', async () => {
     {
       title: 'Dark Stretch Along Canal',
       category: 'poor_lighting',
-      latitude: 18.5100,
-      longitude: 73.8300,
+      latitude: reportTestLatitude,
+      longitude: reportTestLongitude,
       address: 'Karve Road Canal Path, Pune',
       description: 'Streetlights out for the last 3 days.'
     },
@@ -258,8 +337,8 @@ test('9. Community Safety Reports: Duplicate Merging & Flagging', async () => {
     {
       title: 'Unlit Canal Road',
       category: 'poor_lighting',
-      latitude: 18.5101, // ~15m away
-      longitude: 73.8301,
+      latitude: reportTestLatitude + 0.0001, // ~15m away
+      longitude: reportTestLongitude + 0.0001,
       address: 'Karve Road Canal Path, Pune'
     },
     authHeaders

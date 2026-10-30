@@ -9,7 +9,7 @@ const router = express.Router();
 router.get('/', auth, async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT id, name, phone, email, relation FROM emergency_contacts WHERE user_id = $1 ORDER BY id',
+      'SELECT id, name, phone, email, relation, sms_enabled, whatsapp_enabled FROM emergency_contacts WHERE user_id = $1 ORDER BY id',
       [req.user.id]
     );
     res.json(result.rows);
@@ -21,14 +21,16 @@ router.get('/', auth, async (req, res) => {
 // POST /api/contacts - add a contact
 router.post('/', auth, async (req, res) => {
   const { name, phone, email, relation } = req.body;
+  const smsEnabled = req.body.sms_enabled !== false;
+  const whatsappEnabled = req.body.whatsapp_enabled === true;
   if (!name || !phone) {
     return res.status(400).json({ error: 'name and phone are required' });
   }
   try {
     const result = await pool.query(
-      `INSERT INTO emergency_contacts (user_id, name, phone, email, relation)
-       VALUES ($1,$2,$3,$4,$5) RETURNING id, name, phone, email, relation`,
-      [req.user.id, name.trim(), phone.trim(), email ? email.trim() : null, relation || null]
+      `INSERT INTO emergency_contacts (user_id, name, phone, email, relation, sms_enabled, whatsapp_enabled)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, name, phone, email, relation, sms_enabled, whatsapp_enabled`,
+      [req.user.id, name.trim(), phone.trim(), email ? email.trim() : null, relation || null, smsEnabled, whatsappEnabled]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -59,7 +61,7 @@ router.post('/test-sms', auth, async (req, res) => {
 
     if (contactId) {
       const c = await pool.query(
-        'SELECT name, phone FROM emergency_contacts WHERE id = $1 AND user_id = $2',
+        'SELECT name, phone, sms_enabled FROM emergency_contacts WHERE id = $1 AND user_id = $2',
         [contactId, req.user.id]
       );
       if (c.rows.length === 0) {
@@ -67,9 +69,12 @@ router.post('/test-sms', auth, async (req, res) => {
       }
       targetPhone = c.rows[0].phone;
       contactName = c.rows[0].name;
+      if (c.rows[0].sms_enabled === false || c.rows[0].sms_enabled === 0) {
+        return res.status(400).json({ error: 'SMS is disabled for this contact. Enable it before sending a test.' });
+      }
     } else if (!targetPhone) {
       const c = await pool.query(
-        'SELECT name, phone FROM emergency_contacts WHERE user_id = $1 LIMIT 1',
+        'SELECT name, phone FROM emergency_contacts WHERE user_id = $1 AND sms_enabled = TRUE LIMIT 1',
         [req.user.id]
       );
       if (c.rows.length === 0) {

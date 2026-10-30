@@ -20,7 +20,7 @@ function getCurrentPosition() {
     }
     navigator.geolocation.getCurrentPosition(resolve, reject, {
       enableHighAccuracy: true,
-      timeout: 8000,
+      timeout: 2500,
       maximumAge: 3000
     });
   });
@@ -41,6 +41,35 @@ export default function SOSButton() {
   const countdownRef = useRef(null);
   const pendingOptsRef = useRef(null);
   const cameraRef = useRef(null);
+  const idempotencyKeyRef = useRef(null);
+  const hasPendingDeliveries = deliveries.some((delivery) => ['queued', 'processing'].includes(delivery.status));
+
+  useEffect(() => {
+    if (!lastAlert?.id || !hasPendingDeliveries) return undefined;
+    let active = true;
+    const refresh = async () => {
+      try {
+        const { data } = await api.get(`/sos/deliveries/${lastAlert.id}`);
+        if (!active || !Array.isArray(data) || data.length === 0) return;
+        setDeliveries(data);
+        if (data.every((delivery) => !['queued', 'processing'].includes(delivery.status))) {
+          const accepted = data.filter((delivery) => ['sent', 'accepted'].includes(delivery.status)).length;
+          const simulated = data.filter((delivery) => delivery.status === 'simulated').length;
+          const failed = data.filter((delivery) => delivery.status === 'failed').length;
+          const unavailable = data.filter((delivery) => delivery.status === 'unavailable').length;
+          setStatusMsg(`Delivery update: ${accepted} provider accepted, ${simulated} simulated, ${failed} failed, ${unavailable} unavailable.`);
+          setStatusType(failed || unavailable ? 'error' : simulated && !accepted ? 'info' : 'success');
+        }
+      } catch (error) {
+        console.warn('[sos] Could not refresh notification status:', error.message);
+      }
+    };
+    const interval = setInterval(refresh, 1500);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [lastAlert?.id, hasPendingDeliveries]);
 
   // Clear countdown
   const cancelCountdown = useCallback(() => {
@@ -57,19 +86,27 @@ export default function SOSButton() {
     setLoading(true);
     setStatusMsg('📍 Acquiring GPS coordinates…');
     setStatusType('info');
+    if (!idempotencyKeyRef.current) {
+      idempotencyKeyRef.current = globalThis.crypto?.randomUUID?.() || `sos-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    }
+    const idempotencyKey = idempotencyKeyRef.current;
 
-    let latitude = 18.5204; // Pune fallback
-    let longitude = 73.8567;
+    let latitude = null;
+    let longitude = null;
+    let accuracy = null;
+    let locationRecordedAt = null;
     let gpsSuccess = false;
 
     try {
       const pos = await getCurrentPosition();
       latitude = pos.coords.latitude;
       longitude = pos.coords.longitude;
+      accuracy = Number.isFinite(pos.coords.accuracy) ? pos.coords.accuracy : null;
+      locationRecordedAt = new Date(pos.timestamp || Date.now()).toISOString();
       gpsSuccess = true;
     } catch (gpsErr) {
       console.warn('GPS acquisition failed:', gpsErr.message);
-      setStatusMsg('⚠️ GPS unavailable. Dispatching SOS with fallback Pune coordinates.');
+      setStatusMsg('⚠️ GPS unavailable. Sending SOS without a location; you can still call 112 below.');
     }
 
     // Capture photo ONLY if user explicitly enabled camera evidence
@@ -89,29 +126,37 @@ export default function SOSButton() {
       const { data } = await api.post('/sos', {
         latitude,
         longitude,
-        address: gpsSuccess ? null : 'Pune (GPS approximate)',
+        accuracy,
+        location_recorded_at: locationRecordedAt,
+        address: null,
         type: opts.triggerType || 'manual',
         trigger_type: opts.triggerType || 'manual',
         voice_phrase: opts.voicePhrase || null,
         photo_base64: photo
-      });
+      }, { headers: { 'Idempotency-Key': idempotencyKey } });
+      idempotencyKeyRef.current = null;
 
       setLastAlert(data.alert);
       setDeliveries(data.deliveries || []);
       setPoliceStatus(data.policeStatus || null);
 
       const sentCount = (data.deliveries || []).filter((d) => d.status === 'sent').length;
+      const queuedCount = (data.deliveries || []).filter((d) => d.status === 'queued').length;
       const simCount = (data.deliveries || []).filter((d) => d.status === 'simulated').length;
       const failCount = (data.deliveries || []).filter((d) => d.status === 'failed').length;
 
       let msg = `🆘 Alert logged! `;
+      if (!gpsSuccess) msg += 'Location unavailable. ';
       if (sentCount > 0) msg += `${sentCount} SMS sent live. `;
+      if (queuedCount > 0) msg += `${queuedCount} SMS accepted by the provider; delivery is not confirmed. `;
       if (simCount > 0) msg += `${simCount} simulated SMS logged (Dev mode). `;
       if (failCount > 0) msg += `${failCount} delivery failed. `;
+      if ((data.deliveries || []).some((d) => ['queued', 'processing'].includes(d.status))) msg += 'Contact notifications are queued; status will update here. ';
       if (data.contactsTotal === 0) msg += `No emergency contacts configured. `;
+      else if (data.notificationTargets === 0) msg += 'No notification channels are enabled for your contacts. ';
 
       setStatusMsg(msg);
-      setStatusType(failCount > 0 ? 'error' : 'success');
+      setStatusType(failCount > 0 ? 'error' : queuedCount > 0 ? 'info' : 'success');
     } catch (err) {
       setStatusMsg(err.response?.data?.error || 'Failed to dispatch SOS. Please use direct emergency dial below.');
       setStatusType('error');
@@ -152,8 +197,10 @@ export default function SOSButton() {
     try {
       const { data } = await api.post(`/sos/${lastAlert.id}/retry`);
       setDeliveries(data.retryDeliveries || []);
-      setStatusMsg('✅ Retried notification deliveries. Check honest delivery status below.');
-      setStatusType('success');
+      setStatusMsg(data.retryDeliveries?.length
+        ? 'Notification retry queued. Delivery is not confirmed until its status updates.'
+        : data.message || 'No failed notifications are eligible for retry.');
+      setStatusType(data.retryDeliveries?.length ? 'info' : 'error');
     } catch (err) {
       setStatusMsg('❌ Retry failed: ' + (err.response?.data?.error || err.message));
       setStatusType('error');
@@ -189,6 +236,7 @@ export default function SOSButton() {
             onClick={() => startCountdown({ triggerType: 'manual' })}
             disabled={loading || countdown !== null}
             id="sos-main-button"
+            aria-label={loading ? 'Sending emergency SOS' : countdown !== null ? `Emergency SOS will send in ${countdown} seconds` : 'Start emergency SOS countdown'}
           >
             {loading ? (
               <span className="spinner" style={{ width: 36, height: 36, borderWidth: 3 }} />
@@ -205,7 +253,7 @@ export default function SOSButton() {
         </div>
 
         {countdown !== null && (
-          <div className="sos-countdown">
+          <div className="sos-countdown" role="status" aria-live="assertive">
             <div className="countdown-number">{countdown}</div>
             <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
               Dispatching SOS in {countdown}s…
@@ -222,6 +270,8 @@ export default function SOSButton() {
         <div
           className={`msg ${statusType === 'success' ? 'msg-success' : statusType === 'error' ? 'msg-error' : 'msg-info'}`}
           style={{ marginTop: 14 }}
+          role="status"
+          aria-live="polite"
         >
           {statusMsg}
         </div>
@@ -256,8 +306,12 @@ export default function SOSButton() {
                   <strong>{d.name || d.phone}:</strong> {d.phone}
                 </div>
                 <div>
-                  {d.status === 'sent' && <span className="badge badge-green">Sent (Twilio)</span>}
+                  {d.status === 'sent' && <span className="badge badge-green">Delivered ({d.channel === 'whatsapp' ? 'WhatsApp' : 'SMS'})</span>}
+                  {d.status === 'queued' && <span className="badge badge-yellow">Queued (delivery unconfirmed)</span>}
+                  {d.status === 'processing' && <span className="badge badge-yellow">Sending…</span>}
+                  {d.status === 'accepted' && <span className="badge badge-yellow">Accepted by provider (delivery unconfirmed)</span>}
                   {d.status === 'simulated' && <span className="badge badge-yellow">Simulated (Dev)</span>}
+                  {d.status === 'unavailable' && <span className="badge badge-red">Unavailable: {d.error || `${d.channel} is not configured`}</span>}
                   {d.status === 'failed' && <span className="badge badge-red">Failed: {d.error}</span>}
                 </div>
               </div>

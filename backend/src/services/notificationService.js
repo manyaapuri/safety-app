@@ -9,8 +9,7 @@ function getClient() {
   const sid = process.env.TWILIO_ACCOUNT_SID;
   const token = process.env.TWILIO_AUTH_TOKEN;
 
-  if (!sid || !token || sid.includes("your_twilio") ||
-      token.includes("your_twilio")) {
+  if (!sid || !token || !/^AC[a-f0-9]{32}$/i.test(sid) || token.length < 32 || token.includes("your_twilio")) {
     return null;
   }
 
@@ -19,6 +18,38 @@ function getClient() {
   }
 
   return client;
+}
+
+function getSmsMode() {
+  if (process.env.SMS_PROVIDER === 'mock') return process.env.NODE_ENV === 'production' ? 'unavailable' : 'mock_development';
+  const configured = Boolean(getClient() && normalizePhone(process.env.TWILIO_FROM_NUMBER));
+  if (configured && process.env.SMS_PROVIDER !== 'disabled') return 'twilio_live';
+  if (process.env.NODE_ENV === 'production' || process.env.SMS_PROVIDER === 'twilio') return 'unavailable';
+  return 'mock_development';
+}
+
+function getWhatsAppMode() {
+  if (process.env.WHATSAPP_PROVIDER === 'mock') return process.env.NODE_ENV === 'production' ? 'unavailable' : 'mock_development';
+  const whatsappFrom = process.env.TWILIO_WHATSAPP_FROM?.replace(/^whatsapp:/, '');
+  const configured = Boolean(
+    process.env.WHATSAPP_PROVIDER === 'twilio'
+      && getClient()
+      && normalizePhone(whatsappFrom)
+      && /^HX[a-f0-9]{32}$/i.test(process.env.TWILIO_WHATSAPP_CONTENT_SID || '')
+  );
+  return configured ? 'twilio_live' : 'unavailable';
+}
+
+function retryableProviderError(error) {
+  return error.status === 429
+    || error.status >= 500
+    || ['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'EAI_AGAIN', 'ENOTFOUND'].includes(error.code);
+}
+
+function normalizeProviderStatus(result) {
+  if (result.status === 'delivered') return 'sent';
+  if (['failed', 'undelivered'].includes(result.status)) return 'failed';
+  return 'queued';
 }
 
 /**
@@ -80,14 +111,8 @@ async function sendSms(toNumber, message) {
     };
   }
 
-  const from = process.env.TWILIO_FROM_NUMBER;
-  const c = getClient();
-
-  // Use mock mode only when explicitly configured or when Twilio
-  // is not configured. Set SMS_PROVIDER=mock for local development.
-  const mockMode = process.env.SMS_PROVIDER === "mock";
-
-  if (mockMode || !c || !from) {
+  const mode = getSmsMode();
+  if (mode === 'mock_development') {
     console.log(
       `[MOCK SMS] To: ${normalizedTo}\nMessage: ${message}`
     );
@@ -101,27 +126,36 @@ async function sendSms(toNumber, message) {
     };
   }
 
+  if (mode !== 'twilio_live') {
+    return {
+      status: 'failed',
+      channel: 'sms',
+      recipient: normalizedTo,
+      error: 'SMS provider is unavailable or incompletely configured',
+      retryable: false
+    };
+  }
+
   try {
-    const result = await c.messages.create({
-      from,
+    const result = await getClient().messages.create({
+      from: process.env.TWILIO_FROM_NUMBER,
       to: normalizedTo,
-      body: message.trim()
+      body: message.trim(),
+      ...(process.env.TWILIO_STATUS_CALLBACK_URL
+        ? { statusCallback: process.env.TWILIO_STATUS_CALLBACK_URL }
+        : {})
     });
 
     // An API acceptance is not the same as confirmed delivery.
-    const status =
-      result.status === "delivered"
-        ? "sent"
-        : ["failed", "undelivered"].includes(result.status)
-          ? "failed"
-          : "queued";
+    const status = normalizeProviderStatus(result);
 
     return {
       status,
       channel: "sms",
       recipient: normalizedTo,
       provider_ref: result.sid,
-      provider_status: result.status
+      provider_status: result.status,
+      retryable: false
     };
   } catch (error) {
     console.error("[Twilio SMS] Delivery attempt failed:", error.message);
@@ -130,7 +164,61 @@ async function sendSms(toNumber, message) {
       status: "failed",
       channel: "sms",
       recipient: normalizedTo,
-      error: error.message
+      error: error.message,
+      retryable: retryableProviderError(error)
+    };
+  }
+}
+
+/** Send using an approved Twilio WhatsApp Business content template. */
+async function sendWhatsApp(toNumber, { userName, location, time } = {}) {
+  const normalizedTo = normalizePhone(toNumber);
+  if (!normalizedTo) {
+    return { status: 'failed', channel: 'whatsapp', recipient: toNumber || null, error: 'Invalid or missing recipient phone number', retryable: false };
+  }
+
+  const mode = getWhatsAppMode();
+  if (mode === 'mock_development') {
+    console.log(`[MOCK WHATSAPP] To: whatsapp:${normalizedTo}\nNo real WhatsApp message was sent.`);
+    return { status: 'simulated', channel: 'whatsapp', recipient: normalizedTo, provider_ref: `mock-wa-${Date.now()}`, note: 'No real WhatsApp message was sent.' };
+  }
+  if (mode !== 'twilio_live') {
+    return { status: 'unavailable', channel: 'whatsapp', recipient: normalizedTo, error: 'WhatsApp Business provider is unavailable or incompletely configured', retryable: false };
+  }
+
+  const from = process.env.TWILIO_WHATSAPP_FROM.startsWith('whatsapp:')
+    ? process.env.TWILIO_WHATSAPP_FROM
+    : `whatsapp:${process.env.TWILIO_WHATSAPP_FROM}`;
+  try {
+    const result = await getClient().messages.create({
+      from,
+      to: `whatsapp:${normalizedTo}`,
+      contentSid: process.env.TWILIO_WHATSAPP_CONTENT_SID,
+      contentVariables: JSON.stringify({
+        1: userName || 'A SafeHer user',
+        2: location || 'Location unavailable',
+        3: time || new Date().toISOString()
+      }),
+      ...(process.env.TWILIO_STATUS_CALLBACK_URL
+        ? { statusCallback: process.env.TWILIO_STATUS_CALLBACK_URL }
+        : {})
+    });
+    return {
+      status: normalizeProviderStatus(result),
+      channel: 'whatsapp',
+      recipient: normalizedTo,
+      provider_ref: result.sid,
+      provider_status: result.status,
+      retryable: false
+    };
+  } catch (error) {
+    console.error('[Twilio WhatsApp] Delivery attempt failed:', error.message);
+    return {
+      status: 'failed',
+      channel: 'whatsapp',
+      recipient: normalizedTo,
+      error: error.message,
+      retryable: retryableProviderError(error)
     };
   }
 }
@@ -196,6 +284,9 @@ async function notifyPolice(alertInfo = {}) {
 
 module.exports = {
   sendSms,
+  sendWhatsApp,
   notifyPolice,
-  normalizePhone
+  normalizePhone,
+  getSmsMode,
+  getWhatsAppMode
 };

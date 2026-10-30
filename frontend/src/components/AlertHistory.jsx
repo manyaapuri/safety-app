@@ -106,14 +106,19 @@ export default function AlertHistory() {
               <div style={{ display: 'flex', gap: 6, fontSize: 11, color: 'var(--text-muted)', marginBottom: alert.status === 'active' ? 10 : 0 }}>
                 {alert.notified_contacts && <span className="badge badge-cyan">Contacts ✓</span>}
                 {alert.notified_police && <span className="badge badge-purple">Police ✓</span>}
-                <a
-                  href={`https://www.google.com/maps?q=${alert.latitude},${alert.longitude}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{ color: 'var(--accent-purple-light)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4 }}
-                >
-                  🗺️ View on Map
-                </a>
+                {alert.latitude !== null && alert.latitude !== undefined
+                  && alert.longitude !== null && alert.longitude !== undefined ? (
+                    <a
+                      href={`https://www.google.com/maps?q=${alert.latitude},${alert.longitude}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ color: 'var(--accent-purple-light)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4 }}
+                    >
+                      🗺️ View on Map
+                    </a>
+                  ) : (
+                    <span aria-label="Location unavailable">📍 Location unavailable</span>
+                  )}
               </div>
 
               {alert.status === 'active' && (

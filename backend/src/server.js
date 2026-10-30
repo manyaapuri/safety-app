@@ -14,9 +14,11 @@ const routeRoutes = require('./routes/route');
 const facilitiesRoutes = require('./routes/facilities');
 const journeysRoutes = require('./routes/journeys');
 const reportsRoutes = require('./routes/reports');
+const notificationsRoutes = require('./routes/notifications');
 const initSockets = require('./sockets');
 const pool = require('./db');
-const { sendSms } = require('./services/notificationService');
+const { sendSms, getSmsMode, getWhatsAppMode } = require('./services/notificationService');
+const { processSosNotificationQueue } = require('./services/sosNotificationWorker');
 
 const app = express();
 app.use(cors());
@@ -29,6 +31,14 @@ const io = new Server(server, {
 });
 app.set('io', io);
 initSockets(io);
+
+// Durable SOS SMS outbox: provider work happens independently of the API request.
+const sosNotificationInterval = setInterval(() => {
+  processSosNotificationQueue(io).catch((err) => {
+    console.error('[sos/worker] Queue poll failed:', err.message);
+  });
+}, 1000);
+sosNotificationInterval.unref();
 
 // Health check with status breakdown
 app.get('/health', (req, res) => {
@@ -44,7 +54,8 @@ app.get('/health', (req, res) => {
       reliableSos: true,
       communityReports: true,
       pushNotifications: !!process.env.VAPID_PUBLIC_KEY,
-      smsService: !!process.env.TWILIO_ACCOUNT_SID && !process.env.TWILIO_ACCOUNT_SID.includes('your_twilio') ? 'twilio_live' : 'mock_development'
+      smsService: getSmsMode(),
+      whatsappService: getWhatsAppMode()
     }
   });
 });
@@ -60,6 +71,7 @@ app.use('/api/route', routeRoutes);
 app.use('/api/facilities', facilitiesRoutes);
 app.use('/api/journeys', journeysRoutes);
 app.use('/api/reports', reportsRoutes);
+app.use('/api/notifications', notificationsRoutes);
 
 // Background Journey Overdue Monitor (runs every 60 seconds)
 setInterval(async () => {
@@ -78,7 +90,7 @@ setInterval(async () => {
 
       const overdueMsg = `⚠️ Urban Guardian Alert: ${j.user_name}'s journey to ${j.end_name.split(',')[0]} is OVERDUE (expected: ${new Date(j.expected_arrival).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}). Please check in with them.`;
       
-      const contactsRes = await pool.query('SELECT phone FROM emergency_contacts WHERE user_id = $1', [j.user_id]);
+      const contactsRes = await pool.query('SELECT phone FROM emergency_contacts WHERE user_id = $1 AND sms_enabled = TRUE', [j.user_id]);
       for (const c of contactsRes.rows) {
         await sendSms(c.phone, overdueMsg).catch(() => {});
       }
@@ -105,7 +117,8 @@ server.listen(PORT, () => {
   console.log(`   Port:                  ${PORT}`);
   console.log(`   Environment:           ${process.env.NODE_ENV || 'development'}`);
   console.log(`   JWT Secret:            ${process.env.JWT_SECRET ? '✅ Configured' : '❌ MISSING'}`);
-  console.log(`   Twilio SMS:            ${process.env.TWILIO_ACCOUNT_SID && !process.env.TWILIO_ACCOUNT_SID.includes('your_twilio') ? '✅ Configured (Live)' : '⚠️  Mock Provider (Dev Simulation)'}`);
+  console.log(`   SMS provider mode:      ${getSmsMode()}`);
+  console.log(`   WhatsApp provider mode: ${getWhatsAppMode()}`);
   console.log(`   Web Push (VAPID):      ${process.env.VAPID_PUBLIC_KEY && !process.env.VAPID_PUBLIC_KEY.includes('your_vapid') ? '✅ Active' : '❌ Incomplete'}`);
   console.log(`   Pune Facilities DB:    ✅ Loaded`);
   console.log(`   OSRM Journey Routing:  ✅ Active`);

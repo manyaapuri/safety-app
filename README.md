@@ -49,6 +49,7 @@ safety-app/
 │   ├── schema.sql                  # PostgreSQL v1 schema
 │   ├── schema_v2.sql               # PostgreSQL v2 schema
 │   ├── schema_v3_pune.sql          # PostgreSQL v3 Pune schema
+│   ├── schema_v4_sos_location.sql  # PostgreSQL migration: SOS without GPS
 │   └── package.json
 │
 ├── frontend/                 # React 18 + Vite + Leaflet
@@ -135,10 +136,19 @@ Configure in `backend/.env`:
 | `TWILIO_ACCOUNT_SID` | Twilio Account SID for live SMS alerts | Set to real SID for live SMS; leave as mock for dev |
 | `TWILIO_AUTH_TOKEN` | Twilio Auth Token | Set to real token for live SMS |
 | `TWILIO_FROM_NUMBER` | Twilio registered phone number | e.g. `+1234567890` |
+| `SMS_PROVIDER` | `mock`, `twilio`, or `disabled` | `mock` in development; production fails closed when Twilio is unavailable |
+| `TWILIO_STATUS_CALLBACK_URL` | Public HTTPS callback URL for Twilio delivery events | Optional; configure `/api/notifications/twilio/status` |
+| `WHATSAPP_PROVIDER` | `disabled`, `mock`, or `twilio` | `disabled` until Business sender/template approval |
+| `TWILIO_WHATSAPP_FROM` | Approved WhatsApp sender | `whatsapp:+...` |
+| `TWILIO_WHATSAPP_CONTENT_SID` | Approved Twilio WhatsApp content template SID | `HX...` |
 | `VAPID_PUBLIC_KEY` | Web Push Public Key | Generated via `web-push` |
 | `VAPID_PRIVATE_KEY` | Web Push Private Key | Generated via `web-push` |
 | `POLICE_API_URL` | Official Police dispatch webhook | Placeholder (requires formal MoU with Pune Police) |
 | `FRONTEND_URL` | Public frontend URL for share links | `http://localhost:5173` |
+
+For an existing PostgreSQL database, apply `backend/schema_v4_sos_location.sql` before deploying a version that records SOS incidents without GPS. The built-in SQLite database upgrades this schema automatically on startup.
+
+SOS contact messages are written to a durable outbox and processed independently of the request. Contacts default to SMS enabled and WhatsApp disabled; WhatsApp must be opted into per contact. To enable WhatsApp, configure `WHATSAPP_PROVIDER=twilio`, an approved `TWILIO_WHATSAPP_FROM`, and the approved content template SID. The template must use `{{1}}` for the user's name, `{{2}}` for the location text, and `{{3}}` for the incident time. Set `TWILIO_STATUS_CALLBACK_URL` to the public HTTPS URL of the callback route to receive signed Twilio status events. Provider accounts, approved templates, live credentials, and real-device delivery have not been verified by this repository change.
 
 ---
 

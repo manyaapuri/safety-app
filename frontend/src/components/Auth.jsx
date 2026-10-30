@@ -37,8 +37,8 @@ export default function Auth({ onAuth }) {
   return (
     <div className="auth-container">
       <div className="auth-logo">🛡️</div>
-      <h1 className="auth-title">Urban Safety</h1>
-      <p className="auth-subtitle">Your personal safety companion — always alert, always ready.</p>
+      <h1 className="auth-title">SafeHer</h1>
+      <p className="auth-subtitle">Your personal safety companion. Plan ahead and stay connected to people you trust.</p>
 
       <div className="auth-card">
         <div className="auth-tabs">

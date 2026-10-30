@@ -10,7 +10,7 @@ const router = express.Router();
 async function notifyJourneyContacts(userId, message) {
   try {
     const result = await pool.query(
-      'SELECT name, phone FROM emergency_contacts WHERE user_id = $1',
+      'SELECT name, phone FROM emergency_contacts WHERE user_id = $1 AND sms_enabled = TRUE',
       [userId]
     );
     for (const c of result.rows) {

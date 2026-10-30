@@ -257,6 +257,8 @@ function initSqliteDatabase() {
       phone TEXT NOT NULL,
       email TEXT,
       relation TEXT,
+      sms_enabled INTEGER NOT NULL DEFAULT 1,
+      whatsapp_enabled INTEGER NOT NULL DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -281,8 +283,12 @@ function initSqliteDatabase() {
     CREATE TABLE IF NOT EXISTS alerts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-      latitude REAL NOT NULL,
-      longitude REAL NOT NULL,
+      latitude REAL,
+      longitude REAL,
+      location_accuracy REAL,
+      location_recorded_at DATETIME,
+      idempotency_key TEXT,
+      notifications_enqueued INTEGER DEFAULT 0,
       type TEXT DEFAULT 'manual',
       trigger_type TEXT DEFAULT 'manual',
       status TEXT DEFAULT 'active',
@@ -420,12 +426,83 @@ function initSqliteDatabase() {
     );
   `);
 
-  // Migration: Ensure audio_base64 exists if table was created previously without it
-  try {
-    sqlite.exec(`ALTER TABLE alerts ADD COLUMN audio_base64 TEXT;`);
-  } catch (e) {
-    // column already exists
+  const contactColumns = new Set(sqlite.prepare('PRAGMA table_info(emergency_contacts)').all().map((column) => column.name));
+  if (!contactColumns.has('sms_enabled')) sqlite.exec('ALTER TABLE emergency_contacts ADD COLUMN sms_enabled INTEGER NOT NULL DEFAULT 1');
+  if (!contactColumns.has('whatsapp_enabled')) sqlite.exec('ALTER TABLE emergency_contacts ADD COLUMN whatsapp_enabled INTEGER NOT NULL DEFAULT 0');
+
+  // Ensure columns copied by the SOS table rebuild exist on older databases.
+  const initialAlertColumns = new Set(sqlite.prepare('PRAGMA table_info(alerts)').all().map((column) => column.name));
+  if (!initialAlertColumns.has('audio_base64')) sqlite.exec('ALTER TABLE alerts ADD COLUMN audio_base64 TEXT');
+
+  // Upgrade databases created before SOS could be recorded without a GPS fix.
+  // Rebuild only when coordinates are still NOT NULL; SQLite cannot drop that constraint.
+  const alertColumns = sqlite.prepare('PRAGMA table_info(alerts)').all();
+  const latitudeColumn = alertColumns.find((column) => column.name === 'latitude');
+  const longitudeColumn = alertColumns.find((column) => column.name === 'longitude');
+  if (latitudeColumn?.notnull || longitudeColumn?.notnull) {
+    sqlite.exec(`
+      PRAGMA foreign_keys = OFF;
+      BEGIN IMMEDIATE;
+      CREATE TABLE alerts_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        latitude REAL,
+        longitude REAL,
+        location_accuracy REAL,
+        location_recorded_at DATETIME,
+        idempotency_key TEXT,
+        notifications_enqueued INTEGER DEFAULT 0,
+        type TEXT DEFAULT 'manual',
+        trigger_type TEXT DEFAULT 'manual',
+        status TEXT DEFAULT 'active',
+        photo_base64 TEXT,
+        voice_phrase TEXT,
+        audio_base64 TEXT,
+        address TEXT,
+        notified_contacts INTEGER DEFAULT 0,
+        notified_police INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        resolved_at DATETIME
+      );
+      INSERT INTO alerts_new (
+        id, user_id, latitude, longitude, type, trigger_type, status,
+        photo_base64, voice_phrase, audio_base64, address, notified_contacts,
+        notified_police, created_at, resolved_at
+      ) SELECT id, user_id, latitude, longitude, type, trigger_type, status,
+               photo_base64, voice_phrase, audio_base64, address, notified_contacts,
+               notified_police, created_at, resolved_at FROM alerts;
+      DROP TABLE alerts;
+      ALTER TABLE alerts_new RENAME TO alerts;
+      COMMIT;
+      PRAGMA foreign_keys = ON;
+    `);
+  } else {
+    const columnNames = new Set(alertColumns.map((column) => column.name));
+    if (!columnNames.has('location_accuracy')) sqlite.exec('ALTER TABLE alerts ADD COLUMN location_accuracy REAL');
+    if (!columnNames.has('location_recorded_at')) sqlite.exec('ALTER TABLE alerts ADD COLUMN location_recorded_at DATETIME');
+    if (!columnNames.has('idempotency_key')) sqlite.exec('ALTER TABLE alerts ADD COLUMN idempotency_key TEXT');
+    if (!columnNames.has('notifications_enqueued')) sqlite.exec('ALTER TABLE alerts ADD COLUMN notifications_enqueued INTEGER DEFAULT 0');
   }
+  sqlite.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_alerts_user_idempotency ON alerts(user_id, idempotency_key) WHERE idempotency_key IS NOT NULL');
+
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS sos_notification_outbox (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      alert_id INTEGER NOT NULL REFERENCES alerts(id) ON DELETE CASCADE,
+      contact_id INTEGER NOT NULL REFERENCES emergency_contacts(id) ON DELETE CASCADE,
+      channel TEXT NOT NULL DEFAULT 'sms',
+      recipient TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'queued',
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at_ms INTEGER NOT NULL DEFAULT 0,
+      updated_at_ms INTEGER NOT NULL DEFAULT 0,
+      provider_ref TEXT,
+      last_error TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(alert_id, contact_id, channel)
+    );
+    CREATE INDEX IF NOT EXISTS idx_sos_outbox_ready ON sos_notification_outbox(status, next_attempt_at_ms);
+  `);
 
   // Seed Pune Facilities if none exist
   const facCheck = sqlite.prepare('SELECT COUNT(*) as count FROM facilities').get();

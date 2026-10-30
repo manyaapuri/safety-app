@@ -3,7 +3,7 @@ import api from '../api';
 
 export default function Contacts() {
   const [contacts, setContacts] = useState([]);
-  const [form, setForm] = useState({ name: '', phone: '', email: '', relation: '' });
+  const [form, setForm] = useState({ name: '', phone: '', email: '', relation: '', sms_enabled: true, whatsapp_enabled: false });
   const [adding, setAdding] = useState(false);
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(true);
@@ -28,7 +28,7 @@ export default function Contacts() {
     e.preventDefault();
     try {
       await api.post('/contacts', form);
-      setForm({ name: '', phone: '', email: '', relation: '' });
+      setForm({ name: '', phone: '', email: '', relation: '', sms_enabled: true, whatsapp_enabled: false });
       setAdding(false);
       setStatus('✅ Contact added successfully with notification consent.');
       load();
@@ -54,6 +54,8 @@ export default function Contacts() {
       const { data } = await api.post('/contacts/test-sms', { contactId: c.id });
       if (data.delivery?.status === 'sent') {
         setStatus(`✅ Live SMS dispatched via Twilio to ${c.name} (${c.phone}).`);
+      } else if (data.delivery?.status === 'queued') {
+        setStatus(`📨 Twilio accepted the test SMS request for ${c.name}; recipient delivery is not confirmed yet.`);
       } else if (data.delivery?.status === 'simulated') {
         setStatus(`📱 [Dev Mock Provider] SMS simulated to ${c.name} (${c.phone}). Twilio credentials not configured in .env.`);
       } else {
@@ -95,7 +97,7 @@ export default function Contacts() {
       </div>
 
       <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14, background: 'rgba(255,255,255,0.02)', padding: '8px 12px', borderRadius: 6 }}>
-        🔒 <strong>Consent Disclosure:</strong> By adding contacts, you confirm they have consented to receive SMS updates when you begin journeys or trigger an emergency SOS.
+        🔒 <strong>Consent Disclosure:</strong> Select the channels this contact agreed to receive. WhatsApp is sent only through a configured, approved Business provider.
       </div>
 
       {status && (
@@ -134,6 +136,17 @@ export default function Contacts() {
                 <option value="other">Other</option>
               </select>
             </div>
+            <fieldset className="input-group" style={{ border: '1px solid var(--border-color)', borderRadius: 8, padding: 12 }}>
+              <legend className="input-label" style={{ padding: '0 6px' }}>Emergency notification channels</legend>
+              <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10 }}>
+                <input type="checkbox" checked={form.sms_enabled} onChange={(e) => set('sms_enabled', e.target.checked)} />
+                SMS
+              </label>
+              <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                <input type="checkbox" checked={form.whatsapp_enabled} onChange={(e) => set('whatsapp_enabled', e.target.checked)} />
+                <span>WhatsApp Business <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>(requires an approved provider/template)</span></span>
+              </label>
+            </fieldset>
             <button className="btn btn-primary" type="submit">✅ Save Contact With Consent</button>
           </form>
         </div>
@@ -165,6 +178,7 @@ export default function Contacts() {
                   {c.relation && <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 6 }}>({c.relation})</span>}
                 </div>
                 <div className="contact-detail">📞 {c.phone}</div>
+                <div className="contact-detail">Notifications: {c.sms_enabled ? 'SMS' : ''}{c.sms_enabled && c.whatsapp_enabled ? ' · ' : ''}{c.whatsapp_enabled ? 'WhatsApp' : ''}{!c.sms_enabled && !c.whatsapp_enabled ? 'None selected' : ''}</div>
                 {c.email && <div className="contact-detail">✉️ {c.email}</div>}
               </div>
             </div>
