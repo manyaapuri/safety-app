@@ -1,60 +1,49 @@
 import { useState, useEffect } from 'react';
+import { Navigation, Users, Copy, Check, MessageCircle, Clock, MapPin, CheckCircle, X, AlertCircle, Info, ChevronRight } from 'lucide-react';
 import api from '../api';
 
 export default function TrustedJourneySharing({ prefillData, onNavigateToPlanner, onNavigateToContacts }) {
   const [activeJourney, setActiveJourney] = useState(null);
-  const [shareUrl, setShareUrl] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [shareUrl, setShareUrl]           = useState('');
+  const [loading, setLoading]             = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
-  const [statusMsg, setStatusMsg] = useState('');
-  const [copied, setCopied] = useState(false);
+  const [status, setStatus]               = useState({ msg: '', type: '' });
+  const [copied, setCopied]               = useState(false);
 
-  // Form state for creating journey
   const [form, setForm] = useState({
-    startName: '',
-    startLat: null,
-    startLng: null,
-    endName: '',
-    endLat: null,
-    endLng: null,
-    distanceKm: 5,
-    durationMin: 25,
-    bufferMinutes: 15
+    startName: '', startLat: null, startLng: null,
+    endName: '',   endLat: null,   endLng: null,
+    distanceKm: 5, durationMin: 25, bufferMinutes: 15,
   });
 
-  // Apply prefill if coming from Journey Planner
+  const showStatus = (msg, type = 'success') => {
+    setStatus({ msg, type });
+    setTimeout(() => setStatus({ msg: '', type: '' }), 6000);
+  };
+
   useEffect(() => {
     if (prefillData) {
       setForm((prev) => ({
         ...prev,
         startName: prefillData.startName || '',
-        startLat: prefillData.startLat || null,
-        startLng: prefillData.startLng || null,
-        endName: prefillData.endName || '',
-        endLat: prefillData.endLat || null,
-        endLng: prefillData.endLng || null,
+        startLat:  prefillData.startLat  || null,
+        startLng:  prefillData.startLng  || null,
+        endName:   prefillData.endName   || '',
+        endLat:    prefillData.endLat    || null,
+        endLng:    prefillData.endLng    || null,
         distanceKm: prefillData.distanceKm || 5,
-        durationMin: prefillData.durationMin || 25
+        durationMin: prefillData.durationMin || 25,
       }));
     }
   }, [prefillData]);
 
-  // Load active journey
   const loadActiveJourney = async () => {
     try {
       const { data } = await api.get('/journeys/active');
-      if (data.journey) {
-        setActiveJourney(data.journey);
-        setShareUrl(data.shareUrl || '');
-      } else {
-        setActiveJourney(null);
-        setShareUrl('');
-      }
-    } catch (e) {
-      console.warn('Failed to load active journey:', e);
-    } finally {
-      setLoading(false);
-    }
+      setActiveJourney(data.journey || null);
+      setShareUrl(data.shareUrl || '');
+    } catch { /* handled */ }
+    finally { setLoading(false); }
   };
 
   useEffect(() => {
@@ -63,72 +52,51 @@ export default function TrustedJourneySharing({ prefillData, onNavigateToPlanner
     return () => clearInterval(interval);
   }, []);
 
-  // Start journey
   const handleStartJourney = async (e) => {
     e.preventDefault();
-    if (!form.startName || !form.endName) {
-      setStatusMsg('❌ Origin and Destination are required');
-      return;
-    }
+    if (!form.startName || !form.endName) { showStatus('Origin and destination are required.', 'error'); return; }
     setActionLoading(true);
-    setStatusMsg('');
     try {
       const { data } = await api.post('/journeys', form);
       setActiveJourney(data.journey);
       setShareUrl(data.shareUrl);
-      setStatusMsg('✅ Journey started! Secure tracking link dispatched to your trusted contacts.');
+      showStatus('Journey started. Secure tracking link sent to your trusted contacts.');
     } catch (err) {
-      setStatusMsg('❌ ' + (err.response?.data?.error || 'Failed to start journey'));
-    } finally {
-      setActionLoading(false);
-    }
+      showStatus(err.response?.data?.error || 'Failed to start journey.', 'error');
+    } finally { setActionLoading(false); }
   };
 
-  // Complete journey
   const handleCompleteJourney = async () => {
     if (!activeJourney) return;
     setActionLoading(true);
     try {
       await api.put(`/journeys/${activeJourney.id}/complete`);
-      setStatusMsg('✅ Safely arrived! Journey completed and tracking access revoked.');
-      setActiveJourney(null);
-      setShareUrl('');
-    } catch (err) {
-      setStatusMsg('❌ Failed to complete journey');
-    } finally {
-      setActionLoading(false);
-    }
+      showStatus('Safely arrived. Journey completed and tracking access revoked.');
+      setActiveJourney(null); setShareUrl('');
+    } catch { showStatus('Failed to complete journey.', 'error'); }
+    finally { setActionLoading(false); }
   };
 
-  // Cancel journey
   const handleCancelJourney = async () => {
     if (!activeJourney) return;
     setActionLoading(true);
     try {
       await api.put(`/journeys/${activeJourney.id}/cancel`);
-      setStatusMsg('Journey cancelled. Tracking link has been deactivated.');
-      setActiveJourney(null);
-      setShareUrl('');
-    } catch (err) {
-      setStatusMsg('❌ Failed to cancel journey');
-    } finally {
-      setActionLoading(false);
-    }
+      showStatus('Journey cancelled. Tracking link deactivated.', 'info');
+      setActiveJourney(null); setShareUrl('');
+    } catch { showStatus('Failed to cancel journey.', 'error'); }
+    finally { setActionLoading(false); }
   };
 
-  // Extend ETA
   const handleExtendJourney = async (mins = 15) => {
     if (!activeJourney) return;
     setActionLoading(true);
     try {
       const { data } = await api.put(`/journeys/${activeJourney.id}/extend`, { additionalMinutes: mins });
       setActiveJourney(data.journey);
-      setStatusMsg(`✅ Journey extended by ${mins} minutes. New ETA: ${new Date(data.newExpectedArrival).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
-    } catch {
-      setStatusMsg('❌ Failed to extend journey');
-    } finally {
-      setActionLoading(false);
-    }
+      showStatus(`Journey extended by ${mins} min. New ETA: ${new Date(data.newExpectedArrival).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
+    } catch { showStatus('Failed to extend journey.', 'error'); }
+    finally { setActionLoading(false); }
   };
 
   const copyToClipboard = () => {
@@ -137,208 +105,151 @@ export default function TrustedJourneySharing({ prefillData, onNavigateToPlanner
     setTimeout(() => setCopied(false), 3000);
   };
 
-  if (loading) {
-    return (
-      <div style={{ textAlign: 'center', padding: 40 }}>
-        <span className="spinner" />
-      </div>
-    );
-  }
+  if (loading) return <div style={{ textAlign: 'center', padding: 40 }}><span className="spinner" /></div>;
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-        <div>
-          <h2 style={{ fontSize: 20, fontWeight: 800 }}>🤝 Trusted Journey Sharing</h2>
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-            Share your trip privately with emergency contacts with automatic overdue alerts.
-          </p>
-        </div>
-      </div>
-
-      {statusMsg && (
-        <div
-          className={`msg ${statusMsg.startsWith('✅') ? 'msg-success' : statusMsg.startsWith('❌') ? 'msg-error' : 'msg-info'}`}
-          style={{ marginBottom: 14 }}
-        >
-          {statusMsg}
+      {status.msg && (
+        <div className={`msg ${status.type === 'success' ? 'msg-success' : status.type === 'error' ? 'msg-error' : 'msg-info'}`} style={{ marginBottom: 14 }}>
+          {status.type === 'success' ? <CheckCircle size={14} strokeWidth={2} style={{ flexShrink: 0 }} />
+           : status.type === 'error'  ? <AlertCircle size={14} strokeWidth={2} style={{ flexShrink: 0 }} />
+           : <Info size={14} strokeWidth={2} style={{ flexShrink: 0 }} />}
+          {status.msg}
         </div>
       )}
 
-      {/* Active Journey Card */}
+      {/* Active journey */}
       {activeJourney ? (
-        <div className="glass-card glow" style={{ marginBottom: 16 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+        <div className="glass-card" style={{ borderColor: activeJourney.status === 'overdue' ? 'var(--amber-100)' : 'var(--rose-200)', marginBottom: 16 }}>
+          {/* Status header */}
+          <div className="row-between" style={{ marginBottom: 14 }}>
             <div>
-              <span className="badge badge-green" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                <span className="live-dot" />
-                {activeJourney.status === 'overdue' ? '⚠️ OVERDUE' : 'ACTIVE TRIP'}
+              <span className={`badge ${activeJourney.status === 'overdue' ? 'badge-amber' : 'badge-green'}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginBottom: 6 }}>
+                <span className="live-dot" style={{ background: activeJourney.status === 'overdue' ? 'var(--amber-600)' : undefined }} />
+                {activeJourney.status === 'overdue' ? 'Overdue' : 'Active trip'}
               </span>
-              <div style={{ fontWeight: 800, fontSize: 17, marginTop: 6 }}>{activeJourney.title}</div>
+              <div style={{ fontWeight: 800, fontSize: 16, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
+                {activeJourney.title}
+              </div>
             </div>
-            <div style={{ textAlign: 'right' }}>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Expected By:</div>
-              <div style={{ fontWeight: 800, fontSize: 18, color: 'var(--accent-cyan)' }}>
+            <div style={{ textAlign: 'right', flexShrink: 0 }}>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Expected by</div>
+              <div style={{ fontWeight: 800, fontSize: 20, color: 'var(--rose-600)', letterSpacing: '-0.02em', lineHeight: 1.2 }}>
                 {new Date(activeJourney.expected_arrival).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               </div>
             </div>
           </div>
 
-          {/* Route path details */}
-          <div style={{ background: 'rgba(255,255,255,0.03)', padding: 12, borderRadius: 'var(--radius-md)', marginBottom: 14, fontSize: 13 }}>
-            <div>📍 <strong>From:</strong> {activeJourney.start_name}</div>
-            <div style={{ marginTop: 6 }}>🏁 <strong>To:</strong> {activeJourney.end_name}</div>
-            <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-muted)' }}>
-              📏 {activeJourney.distance_km} km · Started: {new Date(activeJourney.started_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+          {/* Route */}
+          <div style={{ background: 'var(--neutral-50)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--r-md)', padding: '10px 14px', marginBottom: 14, fontSize: 13 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <MapPin size={13} strokeWidth={2} color="var(--green-600)" style={{ flexShrink: 0 }} />
+              <span style={{ color: 'var(--text-secondary)' }}><strong>From:</strong> {activeJourney.start_name}</span>
             </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Navigation size={13} strokeWidth={2} color="var(--red-600)" style={{ flexShrink: 0 }} />
+              <span style={{ color: 'var(--text-secondary)' }}><strong>To:</strong> {activeJourney.end_name}</span>
+            </div>
+            {activeJourney.distance_km && (
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8, display: 'flex', alignItems: 'center', gap: 4 }}>
+                <Clock size={11} strokeWidth={2} />
+                {activeJourney.distance_km} km · Started {new Date(activeJourney.started_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </div>
+            )}
           </div>
 
-          {/* Secure Share Link */}
+          {/* Share link */}
           {shareUrl && (
-            <div style={{ marginBottom: 16 }}>
-              <label className="input-label">Private Expiring Share Link</label>
-              <div className="share-url-wrap">
-                <input className="input" readOnly value={shareUrl} onClick={(e) => e.target.select()} />
+            <div style={{ marginBottom: 14 }}>
+              <label className="input-label">Private expiring share link</label>
+              <div className="share-url-wrap" style={{ marginBottom: 8 }}>
+                <input className="input" readOnly value={shareUrl} onClick={(e) => e.target.select()} style={{ fontSize: 12 }} />
                 <button className="btn btn-primary btn-sm copy-btn" onClick={copyToClipboard}>
-                  {copied ? '✓ Copied' : '📋 Copy'}
+                  {copied ? <><Check size={13} strokeWidth={2.5} /> Copied</> : <><Copy size={13} strokeWidth={2} /> Copy</>}
                 </button>
               </div>
-              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                <a
-                  href={`https://wa.me/?text=${encodeURIComponent(`🛡️ I am traveling in Pune. Track my live journey safely here: ${shareUrl}`)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="btn btn-secondary btn-sm"
-                  style={{ textDecoration: 'none', flex: 1, textAlign: 'center' }}
-                >
-                  💬 Share via WhatsApp
-                </a>
-              </div>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6 }}>
-                🔒 This link expires automatically when you arrive. Does not expose past location history.
-              </div>
+              <a
+                href={`https://wa.me/?text=${encodeURIComponent(`I'm traveling in Pune. Follow my journey safely here: ${shareUrl}`)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn btn-secondary btn-sm"
+                style={{ textDecoration: 'none', gap: 6 }}
+              >
+                <MessageCircle size={13} strokeWidth={2} /> Share via WhatsApp
+              </a>
+              <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.5 }}>
+                Link expires automatically when you arrive. Does not expose past location history.
+              </p>
             </div>
           )}
 
-          {/* Journey Controls */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <button
-              className="btn btn-success"
-              style={{ fontWeight: 800, fontSize: 15 }}
-              onClick={handleCompleteJourney}
-              disabled={actionLoading}
-            >
-              ✅ I Have Arrived Safely (End Trip)
+          {/* Actions */}
+          <button className="btn btn-success" style={{ fontWeight: 800, marginBottom: 8 }} onClick={handleCompleteJourney} disabled={actionLoading}>
+            <CheckCircle size={16} strokeWidth={2.5} /> I have arrived safely
+          </button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn btn-secondary btn-sm" onClick={() => handleExtendJourney(15)} disabled={actionLoading} style={{ flex: 1 }}>
+              <Clock size={13} strokeWidth={2} /> Extend +15 min
             </button>
-
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button
-                className="btn btn-secondary btn-sm"
-                onClick={() => handleExtendJourney(15)}
-                disabled={actionLoading}
-                style={{ flex: 1 }}
-              >
-                ⏱️ Extend +15 mins
-              </button>
-              <button
-                className="btn btn-secondary btn-sm"
-                onClick={handleCancelJourney}
-                disabled={actionLoading}
-                style={{ flex: 1, color: 'var(--accent-red)' }}
-              >
-                ⏹ Cancel Trip
-              </button>
-            </div>
+            <button className="btn btn-secondary btn-sm" onClick={handleCancelJourney} disabled={actionLoading} style={{ flex: 1, color: 'var(--red-600)' }}>
+              <X size={13} strokeWidth={2} /> Cancel trip
+            </button>
           </div>
         </div>
       ) : (
-        /* Start New Journey Card */
+        /* Start journey form */
         <div className="glass-card" style={{ marginBottom: 16 }}>
-          <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 10 }}>Start a Protected Journey in Pune</h3>
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 14 }}>
-            Set your destination and estimated arrival. Your emergency contacts will receive an SMS with a live, private tracking link.
+          <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text-primary)', marginBottom: 6 }}>Start a protected journey</div>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 16, lineHeight: 1.6 }}>
+            Set your destination and estimated arrival. Trusted contacts will receive an SMS with a live private tracking link.
           </p>
-
           <form onSubmit={handleStartJourney}>
             <div className="input-group">
-              <label className="input-label">Origin Location</label>
-              <input
-                className="input"
-                placeholder="e.g. Shivajinagar Bus Stand"
-                value={form.startName}
-                onChange={(e) => setForm({ ...form, startName: e.target.value })}
-                required
-              />
+              <label className="input-label" htmlFor="js-start">Origin</label>
+              <input id="js-start" className="input" placeholder="e.g. Shivajinagar Bus Stand" value={form.startName} onChange={(e) => setForm({ ...form, startName: e.target.value })} required />
             </div>
-
             <div className="input-group">
-              <label className="input-label">Destination Location</label>
-              <input
-                className="input"
-                placeholder="e.g. Hinjawadi Phase 1"
-                value={form.endName}
-                onChange={(e) => setForm({ ...form, endName: e.target.value })}
-                required
-              />
+              <label className="input-label" htmlFor="js-end">Destination</label>
+              <input id="js-end" className="input" placeholder="e.g. Hinjawadi Phase 1" value={form.endName} onChange={(e) => setForm({ ...form, endName: e.target.value })} required />
             </div>
-
             <div style={{ display: 'flex', gap: 8 }}>
               <div className="input-group" style={{ flex: 1 }}>
-                <label className="input-label">Est. Travel Time (min)</label>
-                <input
-                  className="input"
-                  type="number"
-                  min="5"
-                  max="300"
-                  value={form.durationMin}
-                  onChange={(e) => setForm({ ...form, durationMin: parseInt(e.target.value) || 20 })}
-                  required
-                />
+                <label className="input-label" htmlFor="js-dur">Travel time (min)</label>
+                <input id="js-dur" className="input" type="number" min="5" max="300" value={form.durationMin} onChange={(e) => setForm({ ...form, durationMin: parseInt(e.target.value) || 25 })} required />
               </div>
               <div className="input-group" style={{ flex: 1 }}>
-                <label className="input-label">Safety Buffer (min)</label>
-                <input
-                  className="input"
-                  type="number"
-                  min="5"
-                  max="60"
-                  value={form.bufferMinutes}
-                  onChange={(e) => setForm({ ...form, bufferMinutes: parseInt(e.target.value) || 15 })}
-                  required
-                />
+                <label className="input-label" htmlFor="js-buf">Safety buffer (min)</label>
+                <input id="js-buf" className="input" type="number" min="5" max="60" value={form.bufferMinutes} onChange={(e) => setForm({ ...form, bufferMinutes: parseInt(e.target.value) || 15 })} required />
               </div>
             </div>
-
-            <button className="btn btn-primary" type="submit" disabled={actionLoading} style={{ width: '100%', marginTop: 6 }}>
-              {actionLoading ? <><span className="spinner" /> Starting Journey…</> : '🚀 Start & Notify Trusted Contacts'}
+            <button className="btn btn-primary" type="submit" disabled={actionLoading}>
+              {actionLoading
+                ? <><span className="spinner" style={{ width: 15, height: 15 }} /> Starting…</>
+                : <><Navigation size={15} strokeWidth={2.5} /> Start &amp; notify contacts</>}
             </button>
           </form>
 
           {onNavigateToPlanner && (
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              style={{ width: '100%', marginTop: 8 }}
-              onClick={onNavigateToPlanner}
-            >
-              🗺️ Plan with Pune Route Map & Facilities First
+            <button type="button" className="btn btn-secondary btn-sm" style={{ width: '100%', marginTop: 8 }} onClick={onNavigateToPlanner}>
+              Plan with route map first <ChevronRight size={13} strokeWidth={2} />
             </button>
           )}
         </div>
       )}
 
-      {/* Trusted Contacts Notice */}
-      <div className="glass-card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div>
-          <div style={{ fontWeight: 700, fontSize: 14 }}>👥 Trusted Emergency Contacts</div>
-          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-            Manage the people who receive your journey updates and SOS notifications.
+      {/* Contacts notice */}
+      <div className="glass-card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ width: 36, height: 36, borderRadius: 'var(--r-md)', background: 'var(--rose-50)', border: '1px solid var(--rose-200)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <Users size={16} strokeWidth={1.75} color="var(--rose-600)" />
+          </div>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--text-primary)' }}>Trusted contacts</div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>Manage who receives journey updates</div>
           </div>
         </div>
         {onNavigateToContacts && (
-          <button className="btn btn-secondary btn-sm" onClick={onNavigateToContacts}>
-            Manage Contacts
-          </button>
+          <button className="btn btn-secondary btn-sm" onClick={onNavigateToContacts}>Manage</button>
         )}
       </div>
     </div>
